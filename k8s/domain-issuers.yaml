@@ -1,0 +1,27 @@
+apiVersion: cert-manager.io/v1alpha2
+kind: Issuer
+metadata:
+  name: letsencrypt
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    #    server: https://acme-staging-v02.api.letsencrypt.org/directory 
+    privateKeySecretRef:
+      name: letsencrypt
+    solvers:
+    - http01:
+       ingress:
+         class: public
+---
+apiVersion: cert-manager.io/v1alpha2
+kind: Certificate
+metadata:
+  name: le-crt
+spec:
+  secretName: tls-secret
+  issuerRef:
+    kind: Issuer
+    name: letsencrypt
+  commonName: card.furway.ru
+  dnsNames:
+  - card.furway.ru
