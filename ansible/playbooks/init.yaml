@@ -1,0 +1,164 @@
+---
+- name: Create environment with all necessary utilities for all servers
+  hosts: all
+  become: yes
+
+  tasks:
+    # - debug: var=ansible_default_ipv4.address
+
+    - name: Install htop, git, zsh, etc...
+      apt:
+        pkg:
+        - htop
+        - git
+        - zsh
+        - snapd
+        - vim
+        - iptables
+        - jq
+        - net-tools
+        - autojump
+        state: present
+
+    - name: Create conf dir
+      become: no
+      file:
+        path: conf/zsh
+        state: directory
+
+    - name: Deploy zsh files
+      become: no
+      get_url:
+        url: "{{ item }}"
+        dest: conf/zsh
+      loop:
+        - https://raw.githubusercontent.com/tehzi/config/master/zsh/zshrc
+        - https://raw.githubusercontent.com/tehzi/config/master/zsh/antigen.zsh
+        - https://raw.githubusercontent.com/tehzi/config/master/zsh/zi.zsh
+    
+    - name: Patch fzf home
+      lineinfile:
+        path: conf/zsh/zshrc
+        regexp: '^export FZF_BASE='
+        line: export FZF_BASE=$HOME/.antigen/bundles/junegunn/fzf/
+
+    - name: Link zsh config files
+      become: no
+      file:
+        src: conf/zsh/zshrc
+        dest: .zshrc
+        state: link
+
+    - name: Change default shell to zsh
+      vars:
+        user: "{{ lookup('env', 'USER') }}"
+      user:
+        name: "{{ user }}"
+        shell: /bin/zsh
+
+    - name: disable swap
+      shell: swapoff -a
+
+    - name: disable swap in fstab
+      replace:
+        path: /etc/fstab
+        regexp: '^([^#].*?\sswap\s+sw\s+.*)$'
+        replace: '# \1'
+
+    - name: Insert lines that set default shell for tty
+      blockinfile:
+        path: .profile
+        block: |
+          if [ “$SSH_TTY” ];
+          then
+            export SHELL=/bin/zsh
+            exec /bin/zsh -l
+          fi
+    
+    - name: Check is ufw installed
+      shell: command -v ufw >/dev/null 2>&1
+      register: is_ufw_exist
+      ignore_errors: yes
+
+    - name: Disabling ufw
+      command: ufw disable
+      become: yes
+      when: is_ufw_exist.rc == 0
+
+    - name: Set ip forwarding
+      sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        sysctl_set: yes
+        state: present
+        reload: yes
+
+    - name: install latest stable "microk8s" snap
+      snap:
+        name: microk8s
+        channel: latest
+        classic: "yes"
+        state: present
+      notify:
+        - enable snapd
+        - restart snapd
+        - enable microk8s addons
+        - create alias k
+        - create alias kubectl
+        - create alias helm
+        - enable metallb addon
+        - add user to microk8s group
+        - create microk8s .kube folder
+        - create config
+
+  handlers:
+    - name: enable snapd
+      service:
+        name: snapd
+        enabled: "yes"
+
+    - name: restart snapd
+      service:
+        name: snapd
+        state: started
+
+    - name: enable microk8s addons
+      shell: /snap/bin/microk8s.enable "{{ item }}"
+      loop:
+        - dns
+        - storage
+        - helm3
+        - ingress
+
+    - name: enable metallb addon
+      shell: >
+        echo "{{ ansible_default_ipv4.address }}-{{ ansible_default_ipv4.address }}" |
+        /snap/bin/microk8s.enable metallb
+
+    - name: create alias k
+      command: snap alias microk8s.kubectl k
+
+    - name: create alias kubectl
+      command: snap alias microk8s.kubectl kubectl
+
+    - name: create alias helm
+      command: snap alias microk8s.helm3 helm
+    
+    - name: add user to microk8s group
+      vars:
+        user: "{{ lookup('env', 'USER') }}"
+      user:
+        append: yes
+        name: "{{ user }}"
+        groups: microk8s
+   
+    - name: create microk8s .kube folder
+      become: no
+      file:
+        path: .kube
+        state: directory
+
+    - name: create config
+      shell: microk8s config > .kube/config
+
+
